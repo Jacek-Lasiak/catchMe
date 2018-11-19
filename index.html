@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>catch me if you can</title>
+    <meta name="viewport" content="initial-scale=1.0" />
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      #mapCanvas {
+        width: 75%;
+        height: 100%;
+        display: inline-block;
+        position: relative;
+      }
+      #messages {
+        width: 25%;
+        position: absolute;
+        padding: 0;
+        right: 0;
+        display: inline-block;
+        margin: 0;
+        height: -webkit-fill-available;
+        background: #ddc;
+        overflow: scroll;
+        padding-top: 20px;
+        overflow-x: unset;
+      }
+      #messages li {
+        list-style: none;
+        border: 0.5px solid #eee;
+      }
+      #messages li h2 {
+        margin: 0;
+      }
+      #messages form {
+        position: fixed;
+        top: 0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="mapCanvas"></div>
+
+    <ul id="messages">
+      <form id="chat">
+        <input type="text" name="message" id="input-message" />
+        <input type="submit" />
+      </form>
+    </ul>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD8Vs8flVyYtBzMvSA86mkdY8sbb14cf14"></script>
+
+    <script>
+      (() => {
+        let nick = prompt("Twój nick: ")
+        if(nick.length===0){
+          nick = "Wąski";
+        }
+
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(setGeo);
+          let position;
+          const chatform = document.getElementById("chat");
+          let users = new Map();
+          let numDeltas = 10;
+          let delay = 1; //milliseconds
+          let i = 0;
+          let deltaLat;
+          let deltaLng;
+
+          function setGeo(pos) {
+            position = [pos.coords.latitude, pos.coords.longitude];
+            initialize();
+            console.log(nick)
+            sendMessage(["MOVE", position[0], position[1], nick]);
+          }
+
+          let host = location.origin.replace(/^http/, "ws");
+          let ws = new WebSocket(host);
+
+          window.addEventListener("beforeunload", function(e) {
+            e.preventDefault();
+            sendMessage(["DEL"]);
+            e.returnValue = "";
+          });
+          ws.onopen = function(e) {
+            console.log("Connection to server opened");
+          };
+          chatform.addEventListener("submit", e => {
+            e.preventDefault();
+            let message = document.getElementById("input-message").value;
+            sendMessage(["MESSAGE", message]);
+          });
+          function appendLog(id, message) {
+            let messages = document.getElementById("messages");
+            let messageElem = document.createElement("li");
+            let mapTitle = users.get(id);
+            messageElem.innerHTML = "" + mapTitle.title + " - <h2>" + message + "</h2>";
+            messages.appendChild(messageElem);
+          }
+
+          ws.onmessage = function(e) {
+            let data = JSON.parse(e.data);
+            switch (data.type) {
+              case "MOVE":
+                if (users.has(data.id)) {
+                  moveMarker(users.get(data.id), [data.lat, data.lng]);
+                } else {
+                  addMarker(data.id, [data.lat, data.lng], data.title);
+                  sendMessage(["MOVE", position[0], position[1], nick]);
+                }
+                break;
+              case "DEL":
+                let marDel = users.get(data.id);
+                marDel.setMap(null);
+                users.delete(data.id);
+                console.log(users);
+                break;
+              case "MESSAGE":
+                appendLog(data.id, data.message);
+                break;
+            }
+          };
+
+          ws.onclose = function(e) {
+            console.log("Connection closed");
+            users.delete();
+            console.log(users);
+          };
+
+          function sendMessage(latlng) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify(latlng));
+            }
+          }
+
+          function initialize() {
+            let latlng = new google.maps.LatLng(position[0], position[1]);
+            let myOptions = {
+              zoom: 10,
+              center: latlng,
+              mapTypeId: google.maps.MapTypeId.ROADMAP
+            };
+            map = new google.maps.Map(
+              document.getElementById("mapCanvas"),
+              myOptions
+            );
+          }
+
+          function addMarker(id, latlng, nick) {
+            let pos = new google.maps.LatLng(latlng[0], latlng[1]);
+            sendMessage(["MESSAGE", "Nowy użytkownik: "+nick])
+            users.set(
+              id,
+              new google.maps.Marker({
+                position: pos,
+                map: map,
+                icon: {
+                  url: "./avatar.png"
+                },
+
+                title: nick 
+              })
+            );
+          }
+
+          document.addEventListener("keydown", e => {
+            switch (e.keyCode) {
+              case 38:
+                return transition([position[0] + 0.01, position[1]]);
+              case 40:
+                return transition([position[0] - 0.01, position[1]]);
+              case 37:
+                return transition([position[0], position[1] - 0.01]);
+              case 39:
+                return transition([position[0], position[1] + 0.01]);
+            }
+          });
+
+          function transition(result) {
+            i = 0;
+            deltaLat = (result[0] - position[0]) / numDeltas;
+            deltaLng = (result[1] - position[1]) / numDeltas;
+            let lati = (position[0] += deltaLat);
+            let long = (position[1] += deltaLng);
+            sendMessage(["MOVE", lati, long]);
+          }
+
+          function moveMarker(marker, pos) {
+            let latlng = new google.maps.LatLng(pos[0], pos[1]);
+            marker.setPosition(latlng);
+            if (i != numDeltas) {
+              i++;
+              setTimeout(moveMarker(marker, pos), delay);
+            }
+          }
+        }
+      })();
+    </script>
+  </body>
+</html>
